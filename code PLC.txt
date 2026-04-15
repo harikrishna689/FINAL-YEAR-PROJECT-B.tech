@@ -1,0 +1,221 @@
+//D1-CLK,D2-DATA FOR I2C LCD
+#include <ESP8266WiFi.h>
+#include <WiFiClient.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266mDNS.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+#define temp         A0
+
+
+
+const char* ssid = "PLC based motor speed control";
+const char* password = "12345678";
+
+ESP8266WebServer server(80);
+LiquidCrystal_I2C lcd(0x27,16,2);
+
+String param1,Seeding_stat="OFF" ,roll_stat="OFF",conv_stat="OFF",fertilizer_stat="OFF",MODE="Auto",obj_stat=" "; ;
+unsigned long currentMillis = 0;
+unsigned long previousMillis1 = 0;
+unsigned int interval = 100,sec=0,msec_100=0,msec1_100=0;
+
+unsigned int move_en=0,auto_en=1,Speed=0,temp_read;
+void handleRoot() 
+{
+  String cmd;     
+  cmd += "<!DOCTYPE HTML>\r\n";
+  cmd += "<html>\r\n";
+  cmd += "<head>"; 
+  cmd += "<title>\"CONTROL PANEL\"</title>";
+  cmd += "<meta http-equiv='refresh' content='3'/>"; 
+  cmd += "<style>";
+
+    //*****************************************************
+  cmd += "a {";
+  cmd += "font-family:Arial;";
+  cmd += "border-radius:10px;";
+  cmd += "background-color: #4E5B31;";
+  cmd += "border: red;";
+  cmd += "color: #E5E4E2;";
+  cmd += "padding: 7px 50px;";
+  cmd += "text-align: center;";
+  cmd += "text-decoration: none;}";
+  //*****************************************************
+  cmd += "b {";
+  // cmd += "border-radius:10px;";
+  //cmd += "background-color: #EE97ED;";
+  //cmd += "border: red;";
+  cmd += "font-family: Courier;";
+  cmd += "color: #123456;";
+  //cmd += "padding: 7px 50px;";
+  //cmd += "text-align: center;";
+  cmd += "text-decoration: none;}";
+  //*****************************************************
+  cmd += "c {";
+  // cmd += "border-radius:10px;";
+  //cmd += "background-color: #EE97ED;";
+  //cmd += "border: red;";
+  cmd += "font-family: Tahoma;";
+  cmd += "color: #FF6347;";
+  //cmd += "padding: 7px 50px;";
+  //cmd += "text-align: center;";
+  cmd += "text-decoration: none;}";
+  //*****************************************************
+  
+    //*****************************************************
+  cmd += "d {";
+  cmd += "font-family:Arial;";
+  cmd += "border-radius:10px;";
+  cmd += "background-color: #4E5B31;";
+  cmd += "border: red;";
+  cmd += "color: #E5E4E2;";
+  cmd += "padding: 7px 42px;";
+  cmd += "text-align: center;";
+  cmd += "text-decoration: none;}";
+  //*****************************************************
+  cmd += "a:hover {background-color: #72DD3E;}";//hower colour selection
+  cmd += "</style>";
+  cmd += "</head>"; 
+  cmd += "<h1><b>PLC Based Motor Speed Conrol </b></h1>";
+ 
+  
+  cmd += "<h3> Motor Controls</h3>";
+  cmd +=("&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp<a href=\"strt\">START</a>&nbsp");
+  cmd +=("&nbsp<a href=\"stp\">STOP</a>&nbsp");
+//  cmd += "<h3>&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp<b>Cleaner Status :  </b><c>" + String( cleaner_stat ) + "</c>\t</h3>";
+  //cmd += "<br/>";
+ //***************************************************************************************************************************
+  //***************************************************************************************************************************
+
+  cmd += "<h3>&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp<b> Speed adjust</b></h3>";
+  cmd +=("&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp<a href=\"Inc\">INC</a>&nbsp");
+  cmd +=("&nbsp<a href=\"Dec\">DEC</a>&nbsp");
+  cmd += "<h4>&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp&nbsp<b>Speed:  </b><c>" + String( Speed)  + "</c></h4>";
+ // cmd += "<br/>";
+
+  //***************************************************************************************************************************
+
+  cmd += "<html>\r\n";
+  server.send(200, "text/html", cmd);
+}
+
+void handleNotFound()
+{
+  String message = "File Not Found\n\n";
+  message += "URI: ";
+  message += server.uri();
+  message += "\nMethod: ";
+  message += (server.method() == HTTP_GET)?"GET":"POST";
+  message += "\nArguments: ";
+  message += server.args();
+  message += "\n";
+  for (uint8_t i=0; i<server.args(); i++)
+  {
+    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
+  }
+  server.send(404, "text/plain", message);
+}
+
+void timer();
+
+void setup(void)
+{
+   
+  Serial.begin(9600);
+  param1="STP";
+  WiFi.mode(WIFI_AP_STA);  //need both to serve the webpage and take commands via tcp
+  Serial.println("");
+  IPAddress ip(1,2,3,4);
+  IPAddress gateway(1,2,3,1);
+  IPAddress subnet(255,255,255,0);
+  WiFi.softAPConfig(ip, gateway, subnet);
+  WiFi.softAP(ssid,password); //Access point is open
+
+  delay(1000);
+  IPAddress myIP = WiFi.softAPIP();
+  Serial.print("AP IP address: ");
+  Serial.println(myIP);
+
+  if (MDNS.begin("esp8266")) { Serial.println("MDNS responder started"); }
+  server.on("/", handleRoot);
+
+ 
+     server.on("/Inc", []()
+  {
+    
+    //Serial.println(" Speed INC 10");
+    if(move_en==1){Speed=Speed+5;if(Speed>=100){Speed=100;}  lcd.setCursor(11, 0);lcd.print(Speed);}
+    server.sendHeader("Location","/"); // Add a header to respond with a new location for the browser to go to the home page again
+    server.send(303); // Send it back to the browser with an HTTP status 303 (See Other) to redirect
+  });
+    server.on("/Dec", []()
+  {
+    
+    //Serial.println("Speed DEC 10");
+    if(move_en==1){Speed=Speed-5;if(Speed<=0){Speed=0;}  lcd.setCursor(11, 0);lcd.print(Speed);}
+    server.sendHeader("Location","/"); // Add a header to respond with a new location for the browser to go to the home page again
+    server.send(303); // Send it back to the browser with an HTTP status 303 (See Other) to redirect
+  });
+ 
+ //****************************************************************************************************************************************
+ server.on("/strt", []()
+  {
+     move_en=1; Serial.println("*S");lcd.setCursor(5, 0);lcd.print("ON ");
+    //cleaner_mode="Auto  ";Mode="Aut";auto_mode=1;sec=0;start_en=1;automatic();
+    server.sendHeader("Location","/"); // Add a header to respond with a new location for the browser to go to the home page again
+    server.send(303); // Send it back to the browser with an HTTP status 303 (See Other) to redirect
+  });
+
+  server.on("/stp", []()
+  {
+    move_en=0; Speed=0; Serial.println("*F"); lcd.setCursor(5, 0);lcd.print("OFF");
+    //cleaner_mode="Manual";Mode="Man";auto_mode=0;
+    server.sendHeader("Location","/"); // Add a header to respond with a new location for the browser to go to the home page again
+    server.send(303); // Send it back to the browser with an HTTP status 303 (See Other) to redirect
+  });
+ //***************************************************************************************************************************************
+  server.onNotFound(handleNotFound);
+  server.begin();
+  Serial.println("HTTP server started");
+  
+  pinMode(temp,INPUT);
+
+
+  lcd.begin();
+  lcd.setCursor(0, 0);lcd.print("   PLC- Motor   ");
+  lcd.setCursor(0, 1);lcd.print(" Speed  Control ");
+  delay(2000);
+  lcd.setCursor(0, 0);lcd.print("Mot :OFF S:     ");
+  lcd.setCursor(0, 1);lcd.print("Temp:           ");
+
+}
+
+void loop(void)
+{
+ timer(); 
+ if(msec1_100>2){server.handleClient();msec1_100=0; }
+ 
+ temp_read=analogRead(temp)/30;
+ if(temp_read<10){lcd.setCursor(6, 1);lcd.print("  ");}
+ if(temp_read<100){lcd.setCursor(7, 1);lcd.print(" ");}
+ lcd.setCursor(5, 1);lcd.print(temp_read);
+
+ if(Speed<10){lcd.setCursor(12, 0);lcd.print("%  ");}
+ else if(Speed<100){lcd.setCursor(13, 0);lcd.print("% ");}
+ else if(Speed>=100){lcd.setCursor(14, 0);lcd.print("%");}
+ lcd.setCursor(11, 0);lcd.print(Speed);
+ //Serial.println(temp_read);
+delay(200);
+ }
+void timer()
+{
+  currentMillis = millis();
+  if ((unsigned long)(currentMillis - previousMillis1) >= interval)   // check for rollover delay 1
+  {
+    msec_100++;msec1_100++;
+    if(msec_100>9){msec_100=0;sec++;}
+    previousMillis1 = currentMillis;
+  } 
+}
